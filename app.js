@@ -168,7 +168,6 @@
     min: { u: 'min', step: 5 }, mi: { u: 'mi', step: 0.1, dec: true }, bpm: { u: 'bpm', step: 1 },
   };
   const FIELDSETS = { wr: ['w', 'r'], r: ['r'], ws: ['s', 'w'], wm: ['w', 'm'], run: ['min', 'mi', 'bpm'], bpm: ['bpm'], tick: [] };
-  function fieldStep(it, f) { return f === 'w' ? it.step : FIELD[f].step; }
   function fieldLabel(it, f) {
     if (f === 'w' && it.wLabel) return it.wLabel;
     if (f === 'bpm' && it.bpmLabel) return it.bpmLabel;
@@ -471,9 +470,11 @@
       holdCache[it.id] = ctx.prev ? Math.min(40, mx + 5) : 20;
     }
     const k = key(w, d);
-    const draft = (S.drafts[k] && S.drafts[k][it.id]) || defaults(it, ctx);
-    const commit = () => { S.drafts[k] = S.drafts[k] || {}; S.drafts[k][it.id] = draft; save(); };
-    const L = S.logs[key(w, d)] || {};
+    const base = defaults(it, ctx);
+    const saved = S.drafts[k] && S.drafts[k][it.id];
+    const dr = saved && saved.rows ? saved : { rows: {}, touched: {} };
+    const commit = () => { S.drafts[k] = S.drafts[k] || {}; S.drafts[k][it.id] = dr; save(); };
+    const L = S.logs[k] || {};
     const logged = (L[it.id] && L[it.id].sets) || [];
     const fields = FIELDSETS[it.fields];
 
@@ -488,78 +489,76 @@
 
     const row = h('article', { class: 'ex' + (it.kind === 'primary' || it.kind === 'squat' || it.kind === 'cluster' ? ' primary' : '') }, head);
     if (it.cue) row.append(h('p', { class: 'ex-cue' }, it.cue));
-    if (ctx.prev) {
-      const lastSets = ctx.prev.sets.filter(Boolean).map((x) => setText(it, x)).join('  ');
-      row.append(h('p', { class: 'ex-last' }, h('span', null, 'Last, wk ' + ctx.prev.w), ' ' + lastSets));
-    }
 
+    // set table: every set visible with its own values
+    const showLast = !!ctx.prev && fields.length < 3;
+    const cols = '24px' + ' minmax(0,1fr)'.repeat(fields.length) + (showLast ? ' 64px' : '') + ' 44px';
+    const table = h('div', { class: 'sets-table', style: 'grid-template-columns:' + cols });
     if (fields.length) {
-      const inputs = h('div', { class: 'inputs' + (fields.length === 3 ? ' three' : '') });
-      for (const f of fields) inputs.append(stepper(it, f, draft, commit));
-      row.append(inputs);
+      table.append(h('span', { class: 'st-h' }, 'Set'));
+      fields.forEach((f) => table.append(h('span', { class: 'st-h' }, fieldLabel(it, f))));
+      if (showLast) table.append(h('span', { class: 'st-h' }, 'wk ' + ctx.prev.w));
+      table.append(h('span'));
     }
-
-    const sets = h('div', { class: 'sets' });
-    const firstEmpty = Array.from({ length: it.sets }, (_, i) => i).find((i) => !logged[i]);
     const count = Math.max(it.sets, logged.length);
+    const firstEmpty = Array.from({ length: count }, (_, i) => i).find((i) => !logged[i]);
+    const refs = [];
+    const valuesFor = (i) => (logged[i] ? logged[i] : Object.assign({}, base, dr.rows[i] || {}));
+
     for (let i = 0; i < count; i++) {
-      const x = logged[i];
-      if (x) {
-        sets.append(h('button', { class: 'set done', onclick: () => openSheet(it, w, d, i, x) }, setText(it, x)));
-      } else {
-        sets.append(h('button', {
-          class: 'set' + (i === firstEmpty ? ' next' : ''),
-          'aria-label': 'Log set ' + (i + 1),
+      const done = !!logged[i];
+      const v = valuesFor(i);
+      refs[i] = {};
+      const cls = 'st-cell' + (done ? ' done' : '');
+      table.append(h('span', { class: cls + ' st-no' }, String(i + 1)));
+      for (const f of fields) {
+        const input = h('input', {
+          type: 'text', inputmode: FIELD[f].dec ? 'decimal' : 'numeric', class: 'st-in',
+          autocomplete: 'off', 'aria-label': 'Set ' + (i + 1) + ' ' + fieldLabel(it, f), placeholder: '–',
+        });
+        input.value = v[f] == null ? '' : fmt(v[f]);
+        input.addEventListener('focus', () => input.select());
+        input.addEventListener('input', () => {
+          const val = num(input.value.replace(',', '.'));
+          const e = S.logs[k] && S.logs[k][it.id];
+          if (e && e.sets[i]) { e.sets[i][f] = val; applyTests(it, e); save(); return; }
+          dr.rows[i] = dr.rows[i] || {}; dr.rows[i][f] = val;
+          dr.touched[i] = dr.touched[i] || {}; dr.touched[i][f] = 1;
+          // carry the new value forward to later sets you haven't touched
+          for (let j = i + 1; f === 'w' && j < count; j++) {
+            if ((e && e.sets[j]) || (dr.touched[j] && dr.touched[j][f])) continue;
+            dr.rows[j] = dr.rows[j] || {}; dr.rows[j][f] = val;
+            if (refs[j] && refs[j][f]) refs[j][f].value = val == null ? '' : fmt(val);
+          }
+          commit();
+        });
+        refs[i][f] = input;
+        table.append(h('span', { class: cls }, input));
+      }
+      if (showLast) {
+        const px = ctx.prev.sets[i];
+        table.append(h('span', { class: cls + ' st-last' }, px ? setText(it, px) : ''));
+      }
+      table.append(h('span', { class: cls + ' st-chk' },
+        h('button', {
+          class: 'chk' + (done ? ' on' : i === firstEmpty ? ' next' : ''),
+          'aria-label': (done ? 'Undo set ' : 'Log set ') + (i + 1),
+          'aria-pressed': String(done),
           onclick: () => {
+            if (done) { clearSet(it, w, d, i); render(); return; }
             unlockAudio();
-            logSet(it, w, d, i, draft);
+            logSet(it, w, d, i, valuesFor(i));
             if (!holdRest && it.rest) startTimer(it.rest, it.name);
             render();
           },
-        }, String(i + 1)));
-      }
+        }, s('svg', { viewBox: '0 0 24 24', width: 20, height: 20, 'aria-hidden': 'true' },
+          s('path', { d: 'M5 12.5l4.5 4.5L19 7.5', fill: 'none', stroke: 'currentColor', 'stroke-width': 3, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })))));
     }
-    row.append(sets);
+    if (ctx.prev && !showLast) {
+      row.append(h('p', { class: 'ex-last' }, h('span', null, 'Last, wk ' + ctx.prev.w), ' ' + ctx.prev.sets.filter(Boolean).map((x) => setText(it, x)).join('  ')));
+    }
+    row.append(table);
     return row;
-  }
-
-  function stepper(it, f, draft, onchange) {
-    const step = fieldStep(it, f);
-    const input = h('input', {
-      type: 'text', inputmode: FIELD[f].dec ? 'decimal' : 'numeric', class: 'num',
-      'aria-label': fieldLabel(it, f), autocomplete: 'off',
-    });
-    input.value = draft[f] == null ? '' : fmt(draft[f]);
-    input.addEventListener('input', () => { draft[f] = num(input.value.replace(',', '.')); onchange && onchange(); });
-    input.addEventListener('focus', () => input.select());
-    const bump = (dir) => {
-      const cur = num(draft[f]);
-      let v = (cur == null ? 0 : cur) + dir * step;
-      v = Math.round(v * 10) / 10;
-      if (v < 0) v = 0;
-      draft[f] = v; input.value = fmt(v); onchange && onchange();
-    };
-    return h('div', { class: 'stepper' },
-      h('button', { class: 'bump', 'aria-label': 'Decrease ' + fieldLabel(it, f), onclick: () => bump(-1) }, '−'),
-      h('label', { class: 'field' }, input, h('span', { class: 'unit' }, fieldLabel(it, f))),
-      h('button', { class: 'bump', 'aria-label': 'Increase ' + fieldLabel(it, f), onclick: () => bump(1) }, '+'));
-  }
-
-  /* ---------- edit sheet ---------- */
-  function openSheet(it, w, d, i, x) {
-    const vals = {};
-    for (const f of FIELDSETS[it.fields]) vals[f] = x[f];
-    const close = () => { sheet.remove(); document.body.classList.remove('locked'); };
-    const fields = FIELDSETS[it.fields];
-    const sheet = h('div', { class: 'sheet-wrap', onclick: (e) => { if (e.target === sheet) close(); } },
-      h('div', { class: 'sheet', role: 'dialog', 'aria-label': it.name + ', set ' + (i + 1) },
-        h('div', { class: 'sheet-head' }, h('h3', null, it.name), h('span', null, 'Set ' + (i + 1))),
-        fields.length ? h('div', { class: 'inputs' + (fields.length === 3 ? ' three' : '') }, fields.map((f) => stepper(it, f, vals))) : null,
-        h('div', { class: 'sheet-actions' },
-          h('button', { class: 'danger', onclick: () => { clearSet(it, w, d, i); close(); render(); } }, 'Delete set'),
-          h('button', { class: 'primary-btn', onclick: () => { logSet(it, w, d, i, vals); close(); render(); } }, 'Save'))));
-    document.body.classList.add('locked');
-    document.body.append(sheet);
   }
 
   /* ---------- timer + tabs ---------- */
