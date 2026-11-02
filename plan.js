@@ -48,9 +48,9 @@
   };
 
   const TUE = {
-    1: [['test'], ['th', 4, 5], ['th', 4, 5], ['th', 3, 5, 4], ['th', 5, 5, 6], ['cpi', 5, 60], ['cpi', 6, 60], ['test']],
-    2: [['th', 4, 6], ['th', 4, 6], ['th', 5, 6, 6], ['th', 3, 6, 4], ['cpi', 6, 75], ['cpi', 7, 75], ['cpi', 8, 75], ['test']],
-    3: [['th', 4, 8], ['th', 4, 8], ['th', 5, 8, 8], ['th', 3, 8, 4], ['cpi', 6, 90], ['cpi', 7, 90], ['cpi', 8, 90], ['test']],
+    1: [['test'], ['th', 4, 5], ['th', 4, 5], ['th', 3, 5, 4], ['vo2', 4, 4], ['vo2', 4, 4], ['vo2', 4, 4], ['test']],
+    2: [['th', 4, 6], ['th', 4, 6], ['th', 5, 6, 6], ['th', 3, 6, 4], ['vo2', 5, 4], ['vo2', 5, 4], ['vo2', 4, 5], ['test']],
+    3: [['th', 4, 8], ['th', 4, 8], ['th', 5, 8, 8], ['th', 3, 8, 4], ['ron', 3, 10], ['ron', 3, 13], ['ron', 3, 13], ['test']],
   };
   const SAT = {
     1: [60, 65, 70, 45, 75, 80, 85, 50],
@@ -105,6 +105,9 @@
   function antTxt(ant) {
     return ant ? (ant - 5) + '-' + (ant + 5) + ' bpm' : 'Threshold HR ±5';
   }
+  function vo2Txt(max) {
+    return max ? Math.round(max * 0.9) + '-' + Math.round(max * 0.95) + ' bpm' : '90-95% of max HR';
+  }
 
   function session(w, d, st) {
     st = st || {};
@@ -114,38 +117,38 @@
 
     if (d === 0) {
       return {
-        title: 'Upper A', kind: 'lift', est: [75, 60], wi,
+        title: 'Upper A', kind: 'lift', est: [55], wi,
         items: [
           Object.assign(dbPress('fdb', 'Flat DB Press', wi), { no: '1' }),
           Object.assign(pullCluster(wi, st.pullMax), { no: '2' }),
-          L({ no: '3', id: 'latpd', name: 'Lat Pulldown', sets: A(3), lo: 8, hi: 10, rest: 90 }),
-          L({ no: '4', id: 'cfly', name: 'Cable Fly', sets: A(3), lo: 10, hi: 12, repTxt: '12', rest: 75 }),
-          L({ no: '5a', ss: 'lat', id: 'slat', name: 'Seated Lateral Raise', sets: A(3), lo: 13, hi: 15, repTxt: '15', rest: 0, cut: 2, cue: 'Scapular plane, stop at shoulder height' }),
-          L({ no: '5b', ss: 'lat', id: 'stlat', name: 'Standing Lateral Raise, heavy', sets: A(3), lo: 13, hi: 15, repTxt: '15', rest: 75, cut: 2, cue: 'Same path, no heaving' }),
-          L({ no: '6a', ss: 'arm', id: 'ccurl', name: 'Cable Bicep Curl', sets: A(3), lo: 13, hi: 15, repTxt: '15', rest: 0 }),
-          L({ no: '6b', ss: 'arm', id: 'tpush', name: 'Tricep Pushdown', sets: A(3), lo: 13, hi: 15, repTxt: '15', rest: 60 }),
-          L({ no: '7', id: 'fpull', name: 'Cable Face Pull', sets: A(2), lo: 13, hi: 15, repTxt: '15', rest: 60, cut: 'drop' }),
-          L({ no: '8a', ss: 'core', id: 'pallof', name: 'Pallof Press', sets: A(3), lo: 8, hi: 10, repTxt: '10', unit: '/side', rest: 0 }),
-          L({ no: '8b', ss: 'core', id: 'hlr', name: 'Hanging Leg Raise', fields: 'r', sets: A(3), lo: 8, hi: 12, rest: 60, cue: "Captain's chair if the shoulder complains" }),
+          L({ no: '3a', ss: 'chest', id: 'pdeck', name: 'Pec Deck', sets: A(3), lo: 10, hi: 12, repTxt: '12', rest: 0 }),
+          L({ no: '3b', ss: 'chest', id: 'fpull', name: 'Cable Face Pull', sets: A(3), lo: 13, hi: 15, repTxt: '15', rest: 75 }),
+          L({ no: '4', id: 'slat', name: 'Seated Lateral Raise', sets: A(4), lo: 13, hi: 15, repTxt: '15', rest: 60, cue: 'Scapular plane, stop at shoulder height' }),
+          L({ no: '5a', ss: 'arm', id: 'ccurl', name: 'Cable Bicep Curl', sets: A(3), lo: 13, hi: 15, repTxt: '15', rest: 0 }),
+          L({ no: '5b', ss: 'arm', id: 'tpush', name: 'Tricep Pushdown', sets: A(3), lo: 13, hi: 15, repTxt: '15', rest: 60 }),
+          L({ no: '6', id: 'hlr', name: 'Hanging Leg Raise', fields: 'r', sets: A(3), lo: 8, hi: 12, rest: 60, cue: "Captain's chair if the shoulder complains" }),
         ],
       };
     }
     if (d === 1) {
       const t = TUE[wi.b][wi.wib - 1];
       const items = [];
+      let title = 'Threshold Run', est = 45;
       if (t[0] === 'test') {
+        title = 'Threshold Test';
         items.push(L({ no: '1', id: 'anttest', name: wi.w === 24 ? 'Final Threshold Test' : 'Threshold Test', kind: 'test', test: 'ant', fields: 'bpm', sets: 3, repTxt: '5 min hard', rest: 60, cue: '60 s rest between rounds. Log average bpm for each round' }));
       } else if (t[0] === 'th') {
-        items.push(L({ no: '1', id: 'thr', name: 'Threshold Reps', kind: 'run', fields: 'bpm', sets: t[1], repTxt: t[2] + ' min', rest: 150, cue: antTxt(st.ant) + ', 2-3 min easy jog between' }));
+        items.push(L({ no: '1', id: 'thr', name: 'Threshold Reps', kind: 'run', fields: 'mibpm', sets: t[1], repMin: t[2], repTxt: t[2] + ' min', rest: 150, cue: antTxt(st.ant) + ', 2-3 min easy jog between' }));
         if (t[3]) items.push(L({ no: '2', id: 'hri', name: 'Hill Sprints', kind: 'run', fields: 'tick', sets: t[3], repTxt: '10-12 s', rest: 75, cue: 'Steep hill or max-incline treadmill. Walk back, stay under threshold' }));
+      } else if (t[0] === 'vo2') {
+        title = 'VO2max Intervals'; est = 50;
+        items.push(L({ no: '1', id: 'vo2', name: 'Intervals', kind: 'run', fields: 'bpm', bpmLabel: 'peak bpm', sets: t[1], repTxt: t[2] + ' min', rest: 180, cue: vo2Txt(st.maxHR) + ', 3 min easy between. Rower or incline treadmill' }));
       } else {
-        items.push(L({ no: '1', id: 'cpi', name: 'Cardiac Power Intervals', kind: 'run', fields: 'bpm', bpmLabel: 'peak bpm', sets: t[1], repTxt: t[2] + ' s', rest: 120, cue: 'Bike or rower. Drive to 186+ bpm, recover to 120-130 before the next rep' }));
+        title = 'VO2max Intervals'; est = 50;
+        items.push(L({ no: '1', id: 'ron', name: '30/15 Intervals', kind: 'run', fields: 'bpm', bpmLabel: 'peak bpm', sets: t[1], repTxt: t[2] + ' reps', rest: 180, cue: 'Each rep is 30 s hard, 15 s easy. Reach ' + vo2Txt(st.maxHR) + ' by the end of each set. 3 min easy between sets. Rower or incline treadmill' }));
       }
-      items.push(L({ no: String(items.length + 1), id: 'tuesum', name: 'Session Total', kind: 'run', fields: 'run', sets: 1, target: 45, repTxt: '~45 min', rest: 0 }));
-      return {
-        title: t[0] === 'test' ? 'Threshold Test' : t[0] === 'cpi' ? 'Cardiac Power' : 'Threshold Run',
-        kind: 'run', est: [45], wi, pre: '10 min easy jog at 130-150 bpm, then the main set, then 5-10 min easy', items,
-      };
+      items.push(L({ no: String(items.length + 1), id: 'tuesum', name: 'Session Total', kind: 'run', fields: 'run', sets: 1, target: est, repTxt: '~' + est + ' min', rest: 0 }));
+      return { title, kind: 'run', est: [est], wi, pre: '10 min easy jog at 130-150 bpm, then the main set, then 5-10 min easy', items };
     }
     if (d === 2) {
       return {
@@ -170,23 +173,25 @@
     }
     if (d === 4) {
       return {
-        title: 'Upper B', kind: 'lift', est: [70, 60], wi,
+        title: 'Upper B', kind: 'lift', est: [55], wi,
         items: [
           Object.assign(bbLift('row', 'Barbell Row', 'row', wi, 150), { no: '1' }),
           Object.assign(dbPress('idb', 'Incline DB Press', wi, 'Bench at 30° or lower'), { no: '2' }),
           L({ no: '3', id: 'pu', name: 'Pull-ups', sets: A(3), lo: 8, hi: 12, wLabel: 'added lb', rest: 90, cue: 'Band for reps past your strict max. At 3×12 strict, add 5 lb' }),
-          L({ no: '4', id: 'cfly', name: 'Cable Fly', sets: A(3), lo: 10, hi: 12, repTxt: '12', rest: 75 }),
-          L({ no: '5a', ss: 'lat', id: 'slat', name: 'Seated Lateral Raise', sets: A(3), lo: 13, hi: 15, repTxt: '15', rest: 0, cue: 'Scapular plane, stop at shoulder height' }),
-          L({ no: '5b', ss: 'lat', id: 'stlat', name: 'Standing Lateral Raise, heavy', sets: A(3), lo: 13, hi: 15, repTxt: '15', rest: 75, cue: 'Same path, no heaving' }),
-          L({ no: '6', id: 'rdfly', name: 'Rear Delt Fly', sets: A(3), lo: 13, hi: 15, repTxt: '15', rest: 60, cut: 2 }),
-          L({ no: '7a', ss: 'arm', id: 'hcurl', name: 'Hammer Curl', sets: A(3), lo: 10, hi: 12, repTxt: '12', rest: 0, cut: 'drop' }),
-          L({ no: '7b', ss: 'arm', id: 'rpush', name: 'Rope Pushdown', sets: A(3), lo: 10, hi: 12, repTxt: '12', rest: 60, cut: 'drop' }),
-          L({ no: '8a', ss: 'core', id: 'abw', name: 'Ab Wheel Rollout', fields: 'r', sets: A(3), lo: 6, hi: 8, repTxt: '8', rest: 0 }),
-          L({ no: '8b', ss: 'core', id: 'suit', name: 'Suitcase Carry', fields: 'wm', sets: A(3), repTxt: '40 m', unit: '/side', rest: 60 }),
+          L({ no: '4a', ss: 'delt', id: 'slat', name: 'Seated Lateral Raise', sets: A(4), lo: 13, hi: 15, repTxt: '15', rest: 0, cue: 'Scapular plane, stop at shoulder height' }),
+          L({ no: '4b', ss: 'delt', id: 'rdfly', name: 'Rear Delt Fly', sets: A(3), lo: 13, hi: 15, repTxt: '15', rest: 60 }),
+          L({ no: '5a', ss: 'core', id: 'abw', name: 'Ab Wheel Rollout', fields: 'r', sets: A(3), lo: 6, hi: 8, repTxt: '8', rest: 0 }),
+          L({ no: '5b', ss: 'core', id: 'pallof', name: 'Pallof Press', sets: A(3), lo: 8, hi: 10, repTxt: '10', unit: '/side', rest: 60 }),
         ],
       };
     }
     if (d === 5) {
+      if (wi.test || wi.w === 1) {
+        return {
+          title: '12-Minute Test', kind: 'run', est: [35], wi, pre: '10 min easy jog first, then the test, then 10 min easy',
+          items: [L({ no: '1', id: 'cooper', name: '12-Minute Run', kind: 'test', test: 'cooper', fields: 'mibpm', bpmLabel: 'peak bpm', sets: 1, repTxt: '12 min, max distance', rest: 0, cue: 'Track or flat route. Hard and steady for 10 min, all-out for the last 2' })],
+        };
+      }
       const min = SAT[wi.b][wi.wib - 1];
       return {
         title: 'Long Run', kind: 'run', optional: true, est: [min], wi,
@@ -201,13 +206,16 @@
     return items.filter((it) => it.cut !== 'drop').map((it) => (it.cut === 2 ? Object.assign({}, it, { sets: Math.min(it.sets, 2) }) : it));
   }
 
+  function cooperVO2(mi) {
+    return mi ? (mi * 1609.34 - 504.9) / 44.73 : null;
+  }
   function e1rm(w, r) {
     if (!w || !r) return null;
     return r <= 1 ? w : w * (1 + r / 30);
   }
   const round5 = (x) => Math.round(x / 5) * 5;
 
-  const api = { DAYS, PHASES, weekInfo, session, shortItems, e1rm, round5, SQ, TUE, SAT };
+  const api = { DAYS, PHASES, weekInfo, session, shortItems, e1rm, cooperVO2, round5, SQ, TUE, SAT };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Plan = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -8,7 +8,7 @@
   /* ---------- state ---------- */
   const DEFAULT = {
     v: 1,
-    settings: { start: '2026-11-02', squat1rm: null, pullMax: null, ant: null, sound: true, awake: true },
+    settings: { start: '2026-11-02', squat1rm: null, pullMax: null, ant: null, maxHR: null, sound: true, awake: true },
     logs: {}, drafts: {}, notes: {},
     ui: { view: 'train', w: null, d: null, short: false, metric: 'squat' },
   };
@@ -82,7 +82,7 @@
   function sessionFor(w, d) {
     const sess = P.session(w, d, S.settings);
     sess.all = sess.items;
-    if (S.ui.short && sess.kind === 'lift') sess.items = P.shortItems(sess.items);
+    if (S.ui.short && sess.items.some((it) => it.cut)) sess.items = P.shortItems(sess.items);
     return sess;
   }
 
@@ -158,6 +158,7 @@
       case 'wm': d.w = lastW; d.m = 40; break;
       case 'run': d.min = it.target || null; d.mi = null; d.bpm = null; break;
       case 'bpm': d.bpm = null; break;
+      case 'mibpm': d.mi = null; d.bpm = null; break;
       default: break;
     }
     return d;
@@ -167,7 +168,7 @@
     w: { u: 'lb', dec: true }, r: { u: 'reps', step: 1 }, s: { u: 'sec', step: 5 }, m: { u: 'm', step: 5 },
     min: { u: 'min', step: 5 }, mi: { u: 'mi', step: 0.1, dec: true }, bpm: { u: 'bpm', step: 1 },
   };
-  const FIELDSETS = { wr: ['w', 'r'], r: ['r'], ws: ['s', 'w'], wm: ['w', 'm'], run: ['min', 'mi', 'bpm'], bpm: ['bpm'], tick: [] };
+  const FIELDSETS = { wr: ['w', 'r'], r: ['r'], ws: ['s', 'w'], wm: ['w', 'm'], run: ['min', 'mi', 'bpm'], mibpm: ['mi', 'bpm'], bpm: ['bpm'], tick: [] };
   function fieldLabel(it, f) {
     if (f === 'w' && it.wLabel) return it.wLabel;
     if (f === 'bpm' && it.bpmLabel) return it.bpmLabel;
@@ -184,6 +185,7 @@
       case 'wm': return (x.w ? fmt(x.w) + '×' : '') + (x.m != null ? x.m + 'm' : '✓');
       case 'run': return x.min != null ? x.min + '′' : '✓';
       case 'bpm': return x.bpm != null ? String(x.bpm) : '✓';
+      case 'mibpm': return x.mi != null ? fmt(x.mi) + ' mi' : x.bpm != null ? x.bpm + ' bpm' : '✓';
       default: return '✓';
     }
   }
@@ -195,7 +197,7 @@
     else if (it.lo === it.hi) reps = String(it.lo);
     else reps = it.lo + '-' + it.hi;
     if (it.fields === 'ws') reps = holdTarget(it) + ' s';
-    if (it.fields === 'run') return reps;
+    if (it.fields === 'run' || (it.sets === 1 && it.repTxt)) return reps;
     return (it.sets > 1 || it.fields !== 'tick' ? it.sets + ' × ' : '') + reps + (it.unit || '');
   }
   let holdCache = {};
@@ -238,6 +240,9 @@
     } else if (it.test === 'pull') {
       const best = Math.max(...sets.map((x) => x.r || 0));
       if (best > 0) S.settings.pullMax = best;
+    } else if (it.test === 'cooper') {
+      const peak = Math.max(...sets.map((x) => x.bpm || 0));
+      if (peak > 0 && (!S.settings.maxHR || peak > S.settings.maxHR)) S.settings.maxHR = peak;
     } else if (it.test === 'ant') {
       const v = sets.map((x) => x.bpm).filter((x) => x != null);
       if (v.length) S.settings.ant = Math.round(v.reduce((a, b) => a + b, 0) / v.length);
@@ -420,12 +425,12 @@
       return main;
     }
 
-    const est = sess.kind === 'lift' ? (S.ui.short ? sess.est[1] : sess.est[0]) : sess.est[0];
+    const est = S.ui.short && sess.est[1] ? sess.est[1] : sess.est[0];
     main.append(h('section', { class: 'sess-head' },
       h('div', null,
         h('h1', null, sess.title),
         h('p', { class: 'sess-meta' }, fmtDay(sessionDate(w, d)) + ', about ' + est + ' min' + (sess.optional ? ', optional' : ''))),
-      sess.kind === 'lift' ? h('div', { class: 'seg', role: 'group' },
+      sess.all.some((it) => it.cut) ? h('div', { class: 'seg', role: 'group' },
         h('button', { class: !S.ui.short ? 'on' : '', 'aria-pressed': String(!S.ui.short), onclick: () => { S.ui.short = false; save(); render(); } }, 'Full'),
         h('button', { class: S.ui.short ? 'on' : '', 'aria-pressed': String(S.ui.short), onclick: () => { S.ui.short = true; save(); render(); } }, '60 min')) : null));
 
@@ -589,7 +594,8 @@
     { id: 'row', name: 'Barbell Row', unit: 'lb e1RM', ids: ['row'], mode: 'e1rm' },
     { id: 'rdl', name: 'RDL', unit: 'lb e1RM', ids: ['rdl'], mode: 'e1rm' },
     { id: 'pull', name: 'Pull-up Max', unit: 'reps', ids: ['pullmax'], mode: 'maxr' },
-    { id: 'ant', name: 'Threshold HR', unit: 'bpm', ids: ['anttest'], mode: 'avgbpm' },
+    { id: 'vo2', name: 'VO2max est.', unit: 'ml/kg/min', ids: ['cooper'], mode: 'cooper' },
+    { id: 'thrpace', name: 'Threshold Pace', unit: 'min/mi', ids: ['thr'], mode: 'thrpace', lowerBetter: true },
     { id: 'pace', name: 'Easy Pace', unit: 'min/mi', ids: ['co', 'long'], mode: 'pace', lowerBetter: true },
   ];
   function series(m) {
@@ -612,6 +618,17 @@
         } else if (m.mode === 'avgbpm') {
           const b = sets.map((x) => x.bpm).filter((x) => x != null);
           if (b.length) v = Math.round(b.reduce((a, c) => a + c, 0) / b.length);
+        } else if (m.mode === 'cooper') {
+          const x = sets[0];
+          if (x.mi) { v = P.cooperVO2(x.mi); detail = fmt(x.mi) + ' mi' + (x.bpm ? ', peak ' + x.bpm + ' bpm' : ''); }
+        } else if (m.mode === 'thrpace') {
+          const it = P.session(w, d, S.settings).items.find((i) => i.id === id);
+          const withMi = sets.filter((x) => x.mi);
+          if (it && it.repMin && withMi.length) {
+            v = withMi.reduce((a, x) => a + it.repMin / x.mi, 0) / withMi.length;
+            const hr = withMi.map((x) => x.bpm).filter((b) => b != null);
+            detail = withMi.length + ' × ' + it.repMin + ' min' + (hr.length ? ', ' + Math.round(hr.reduce((a, b) => a + b, 0) / hr.length) + ' bpm' : '');
+          }
         } else if (m.mode === 'pace') {
           const x = sets[0];
           if (x.min && x.mi) { v = x.min / x.mi; detail = x.mi + ' mi in ' + x.min + ' min' + (x.bpm ? ', ' + x.bpm + ' bpm' : ''); }
@@ -622,7 +639,8 @@
     return out;
   }
   const paceTxt = (v) => Math.floor(v) + ':' + String(Math.round((v % 1) * 60)).padStart(2, '0');
-  const valTxt = (m, v) => (m.mode === 'pace' ? paceTxt(v) : String(Math.round(v)));
+  const isPace = (m) => m.mode === 'pace' || m.mode === 'thrpace';
+  const valTxt = (m, v) => (isPace(m) ? paceTxt(v) : m.mode === 'cooper' ? fmt(v) : String(Math.round(v)));
 
   function progressView() {
     ensurePos();
@@ -689,7 +707,7 @@
   function chart(m, sr) {
     const W = 340, H = 170, L = 34, R = 10, T = 12, B = 24;
     let lo = Math.min(...sr.map((p) => p.v)), hi = Math.max(...sr.map((p) => p.v));
-    if (lo === hi) { const pad = m.mode === 'pace' ? 0.5 : Math.max(2, Math.abs(lo) * 0.05); lo -= pad; hi += pad; }
+    if (lo === hi) { const pad = isPace(m) ? 0.5 : Math.max(2, Math.abs(lo) * 0.05); lo -= pad; hi += pad; }
     const padY = (hi - lo) * 0.15; lo -= padY; hi += padY;
     const xs = (w) => L + ((w - 1) / (WEEKS - 1)) * (W - L - R);
     const ys = (v) => (m.lowerBetter ? T + ((v - lo) / (hi - lo)) * (H - T - B) : H - B - ((v - lo) / (hi - lo)) * (H - T - B));
@@ -748,7 +766,8 @@
     main.append(h('section', { class: 'panel' }, h('h2', null, 'Maxes'),
       numRow('Squat e1RM', 'squat1rm', 'lb'),
       numRow('Pull-up max', 'pullMax', 'reps'),
-      numRow('Threshold HR', 'ant', 'bpm')));
+      numRow('Threshold HR', 'ant', 'bpm'),
+      numRow('Max HR', 'maxHR', 'bpm')));
 
     main.append(h('section', { class: 'panel' }, h('h2', null, 'Gym'),
       toggle('Sound when rest ends', 'sound'),
