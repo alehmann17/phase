@@ -1,5 +1,5 @@
-const CACHE = 'phase-v3';
-const FILES = ['./', './index.html', './styles.css', './plan.js', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
+const CACHE = 'phase-v4';
+const FILES = ['./', './index.html', './styles.css', './plan.js', './garmin.js', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));

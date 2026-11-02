@@ -11,6 +11,7 @@
     settings: { start: '2026-11-02', squat1rm: null, pullMax: null, ant: null, maxHR: null, sound: true, awake: true },
     logs: {}, drafts: {}, notes: {},
     ui: { view: 'train', w: null, d: null, short: false, metric: 'squat' },
+    garmin: { url: '', key: '', acts: {}, days: {}, zones: null, laps: {}, syncedTo: null, last: null, err: null },
   };
   let S = load();
 
@@ -24,6 +25,7 @@
           settings: { ...DEFAULT.settings, ...(s.settings || {}) },
           ui: { ...DEFAULT.ui, ...(s.ui || {}) },
           logs: s.logs || {}, drafts: s.drafts || {}, notes: s.notes || {},
+          garmin: { ...DEFAULT.garmin, ...(s.garmin || {}) },
         };
       }
     } catch (e) { /* fall through */ }
@@ -76,6 +78,7 @@
   }
   const num = (v) => (v === '' || v == null || isNaN(Number(v)) ? null : Number(v));
   const fmt = (v) => (v == null ? '' : String(Math.round(v * 10) / 10));
+  const fmtF = (f, v) => (v == null ? '' : f === 'mi' ? String(Math.round(v * 100) / 100) : fmt(v));
   const key = (w, d) => w + '-' + d;
   const phaseCls = (ph) => (P.PHASES[ph] || P.PHASES.test).cls;
 
@@ -185,7 +188,7 @@
       case 'wm': return (x.w ? fmt(x.w) + '×' : '') + (x.m != null ? x.m + 'm' : '✓');
       case 'run': return x.min != null ? x.min + '′' : '✓';
       case 'bpm': return x.bpm != null ? String(x.bpm) : '✓';
-      case 'mibpm': return x.mi != null ? fmt(x.mi) + ' mi' : x.bpm != null ? x.bpm + ' bpm' : '✓';
+      case 'mibpm': return x.mi != null ? fmtF('mi', x.mi) + ' mi' : x.bpm != null ? x.bpm + ' bpm' : '✓';
       default: return '✓';
     }
   }
@@ -240,9 +243,6 @@
     } else if (it.test === 'pull') {
       const best = Math.max(...sets.map((x) => x.r || 0));
       if (best > 0) S.settings.pullMax = best;
-    } else if (it.test === 'cooper') {
-      const peak = Math.max(...sets.map((x) => x.bpm || 0));
-      if (peak > 0 && (!S.settings.maxHR || peak > S.settings.maxHR)) S.settings.maxHR = peak;
     } else if (it.test === 'ant') {
       const v = sets.map((x) => x.bpm).filter((x) => x != null);
       if (v.length) S.settings.ant = Math.round(v.reduce((a, b) => a + b, 0) / v.length);
@@ -411,6 +411,101 @@
       s('path', { d: dir < 0 ? 'M15 5l-7 7 7 7' : 'M9 5l7 7-7 7', fill: 'none', stroke: 'currentColor', 'stroke-width': 2.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
   }
 
+  /* ---------- Garmin ---------- */
+  const G = window.Garmin;
+  const gcfg = () => ({ url: S.garmin.url, key: S.garmin.key });
+  const gReady = () => !!(S.garmin.url && S.garmin.key);
+  let syncing = false;
+
+  async function garminSync(manual) {
+    if (!gReady() || syncing) return;
+    syncing = true;
+    if (manual) render();
+    try {
+      const floor = iso(addDays(parseDate(S.settings.start), -10));
+      const today = iso(new Date());
+      const r = await G.sync(gcfg(), S.garmin, { today, floor });
+      S.garmin.err = r.errors.length ? 'Some data failed: ' + r.errors.join(', ') : null;
+      if (manual) flash(r.errors.length ? S.garmin.err : 'Synced');
+    } catch (e) {
+      S.garmin.err = e.message || 'Sync failed';
+      if (manual) flash(S.garmin.err);
+    }
+    syncing = false;
+    save();
+    render();
+  }
+  function maybeSync() {
+    if (gReady() && (!S.garmin.last || Date.now() - S.garmin.last > 20 * 60 * 1000)) garminSync(false);
+  }
+
+  function garminCard(sess, w, d) {
+    if (sess.kind !== 'run' || !gReady()) return null;
+    const date = iso(sessionDate(w, d));
+    const act = G.activityFor(S.garmin, date);
+    if (!act) return null;
+    const parts = [act.name || act.type.replace(/_/g, ' ')];
+    if (act.dur) parts.push(Math.round(act.dur / 60) + ' min');
+    if (act.dist) parts.push((act.dist / 1609.344).toFixed(2) + ' mi');
+    if (act.avgHR) parts.push(Math.round(act.avgHR) + ' bpm avg');
+    if (act.maxHR) parts.push(act.maxHR + ' max');
+    const btn = h('button', { class: 'primary-btn g-fill' }, 'Fill from Garmin');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true; btn.textContent = 'Filling…';
+      try {
+        let ls = null;
+        if (G.needsLaps(sess.items)) {
+          ls = S.garmin.laps[act.id];
+          if (!ls) { ls = await G.laps(gcfg(), act.id); S.garmin.laps[act.id] = ls; }
+        }
+        const fill = G.fillFor(sess.items, act, ls);
+        let n = 0;
+        for (const it of sess.items) {
+          const rows = fill[it.id];
+          if (!rows) continue;
+          const L = (S.logs[key(w, d)] || {})[it.id];
+          rows.slice(0, it.sets).forEach((v, i) => { if (!(L && L.sets[i])) { logSet(it, w, d, i, v); n++; } });
+        }
+        const missing = sess.items.filter((it) => it.fields !== 'tick' && !fill[it.id]).map((it) => it.name);
+        flash(n ? (missing.length ? 'Filled. No laps found for ' + missing.join(', ') : 'Filled from Garmin') : missing.length ? 'No matching laps in this activity' : 'Already filled');
+      } catch (e) {
+        flash(e.message || 'Garmin download failed');
+      }
+      render();
+    });
+    return h('section', { class: 'garmin' },
+      h('div', { class: 'g-head' }, h('span', { class: 'g-src' }, 'Garmin'), h('span', { class: 'g-when' }, act.time || '')),
+      h('p', { class: 'g-line' }, parts.join(', ')),
+      act.aTE ? h('p', { class: 'g-sub' }, 'Training effect ' + act.aTE.toFixed(1) + ' aerobic, ' + (act.anTE || 0).toFixed(1) + ' anaerobic') : null,
+      btn);
+  }
+
+  function readinessStrip(sess, w, d) {
+    if (!gReady()) return null;
+    const hard = (sess.kind === 'lift') || (d === 1);
+    if (!hard) return null;
+    const date = iso(sessionDate(w, d));
+    const r = G.readiness(S.garmin.days, date);
+    if (!r) return null;
+    const x = r.d;
+    const cell = (label, val, flag) => h('div', { class: 'rd-cell' + (flag ? ' flag' : '') }, h('span', { class: 'rd-label' }, label), h('span', { class: 'rd-val' }, val));
+    const status = x.hrvStatus ? x.hrvStatus.charAt(0) + x.hrvStatus.slice(1).toLowerCase() : '';
+    const cells = [
+      cell('HRV', x.hrv != null ? x.hrv + (status ? ' ' + status.toLowerCase() : '') : '–', r.flags.includes('hrv')),
+      cell('Resting HR', x.rhr != null ? x.rhr + (r.rhrAvg ? ' (avg ' + r.rhrAvg + ')' : '') : '–', r.flags.includes('rhr')),
+      cell('Sleep', x.sleepS != null ? Math.floor(x.sleepS / 3600) + ':' + String(Math.round((x.sleepS % 3600) / 60)).padStart(2, '0') : '–', r.flags.includes('sleep')),
+    ];
+    let advice = null;
+    if (r.flags.length) {
+      advice = d === 1
+        ? "Run Thursday's easy run today and move this session to Thursday."
+        : 'Use deload sets on the primary lifts today.';
+    }
+    return h('section', { class: 'readiness' + (r.flags.length ? ' warn' : '') },
+      h('div', { class: 'rd-row' }, cells),
+      advice ? h('p', { class: 'rd-advice' }, advice) : null);
+  }
+
   function trainView() {
     const w = S.ui.w, d = S.ui.d;
     const sess = sessionFor(w, d);
@@ -433,6 +528,11 @@
       sess.all.some((it) => it.cut) ? h('div', { class: 'seg', role: 'group' },
         h('button', { class: !S.ui.short ? 'on' : '', 'aria-pressed': String(!S.ui.short), onclick: () => { S.ui.short = false; save(); render(); } }, 'Full'),
         h('button', { class: S.ui.short ? 'on' : '', 'aria-pressed': String(S.ui.short), onclick: () => { S.ui.short = true; save(); render(); } }, '60 min')) : null));
+
+    const rd = readinessStrip(sess, w, d);
+    if (rd) main.append(rd);
+    const gc = garminCard(sess, w, d);
+    if (gc) main.append(gc);
 
     if (sess.kind === 'lift') {
       main.append(h('details', { class: 'warm' },
@@ -494,6 +594,14 @@
 
     const row = h('article', { class: 'ex' + (it.kind === 'primary' || it.kind === 'squat' || it.kind === 'cluster' ? ' primary' : '') }, head);
     if (it.cue) row.append(h('p', { class: 'ex-cue' }, it.cue));
+    const peaks = ['cooper', 'vo2', 'ron'].includes(it.id) ? logged.filter(Boolean).map((x) => x.bpm || 0) : [];
+    const peak = peaks.length ? Math.max(...peaks) : 0;
+    if (peak > 0 && peak !== S.settings.maxHR && (!S.settings.maxHR || peak > S.settings.maxHR)) {
+      row.append(h('button', { class: 'suggest', onclick: () => { S.settings.maxHR = peak; save(); flash('Max HR set to ' + peak); render(); } }, 'Set max HR to ' + peak));
+    }
+    if ((it.id === 'co' || it.id === 'long') && logged[0] && logged[0].bpm > 150) {
+      row.append(h('p', { class: 'ex-warn' }, 'Averaged ' + logged[0].bpm + ' bpm, above the 150 ceiling'));
+    }
 
     // set table: every set visible with its own values
     const showLast = !!ctx.prev && fields.length < 3;
@@ -521,7 +629,7 @@
           type: 'text', inputmode: FIELD[f].dec ? 'decimal' : 'numeric', class: 'st-in',
           autocomplete: 'off', 'aria-label': 'Set ' + (i + 1) + ' ' + fieldLabel(it, f), placeholder: '–',
         });
-        input.value = v[f] == null ? '' : fmt(v[f]);
+        input.value = fmtF(f, v[f]);
         input.addEventListener('focus', () => input.select());
         input.addEventListener('input', () => {
           const val = num(input.value.replace(',', '.'));
@@ -533,7 +641,7 @@
           for (let j = i + 1; f === 'w' && j < count; j++) {
             if ((e && e.sets[j]) || (dr.touched[j] && dr.touched[j][f])) continue;
             dr.rows[j] = dr.rows[j] || {}; dr.rows[j][f] = val;
-            if (refs[j] && refs[j][f]) refs[j][f].value = val == null ? '' : fmt(val);
+            if (refs[j] && refs[j][f]) refs[j][f].value = fmtF(f, val);
           }
           commit();
         });
@@ -597,9 +705,22 @@
     { id: 'vo2', name: 'VO2max est.', unit: 'ml/kg/min', ids: ['cooper'], mode: 'cooper' },
     { id: 'thrpace', name: 'Threshold Pace', unit: 'min/mi', ids: ['thr'], mode: 'thrpace', lowerBetter: true },
     { id: 'pace', name: 'Easy Pace', unit: 'min/mi', ids: ['co', 'long'], mode: 'pace', lowerBetter: true },
+    { id: 'hrv', name: 'HRV', unit: 'ms, Garmin', mode: 'gday', field: 'hrv' },
+    { id: 'rhr', name: 'Resting HR', unit: 'bpm, Garmin', mode: 'gday', field: 'rhr', lowerBetter: true },
   ];
   function series(m) {
     const out = [];
+    if (m.mode === 'gday') {
+      const start = parseDate(S.settings.start);
+      for (const [date, x] of Object.entries(S.garmin.days || {})) {
+        if (x[m.field] == null) continue;
+        const diff = Math.round((parseDate(date) - start) / 86400000);
+        if (diff < 0 || diff >= WEEKS * 7) continue;
+        const w = Math.floor(diff / 7) + 1, d = diff % 7;
+        out.push({ w, d, v: x[m.field], ph: P.weekInfo(w).ph, detail: m.field === 'hrv' && x.hrvStatus ? x.hrvStatus.toLowerCase() : '', sets: [] });
+      }
+      return out.sort((a, b) => a.w - b.w || a.d - b.d);
+    }
     for (let w = 1; w <= WEEKS; w++) for (let d = 0; d < 7; d++) {
       const L = S.logs[key(w, d)];
       if (!L) continue;
@@ -769,6 +890,23 @@
       numRow('Threshold HR', 'ant', 'bpm'),
       numRow('Max HR', 'maxHR', 'bpm')));
 
+    const gIn = (label, k, type) => {
+      const inp = h('input', { type, class: 'txt', 'aria-label': label, autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', placeholder: label === 'Relay URL' ? 'https://…workers.dev' : '' });
+      inp.value = S.garmin[k] || '';
+      inp.addEventListener('change', () => { S.garmin[k] = inp.value.trim(); S.garmin.last = null; save(); render(); });
+      return h('label', { class: 'row col' }, h('span', { class: 'row-label' }, label), inp);
+    };
+    const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : Math.round(m / 60) + ' h ago'; };
+    const z = S.garmin.zones;
+    main.append(h('section', { class: 'panel' }, h('h2', null, 'Garmin'),
+      gIn('Relay URL', 'url', 'url'),
+      gIn('Relay key', 'key', 'password'),
+      z && z.maxHR ? h('div', { class: 'row' + (S.settings.maxHR && Math.abs(z.maxHR - S.settings.maxHR) > 2 ? ' mismatch' : '') },
+        h('span', { class: 'row-label' }, 'Watch max HR'), h('span', { class: 'row-static' }, z.maxHR + ' bpm')) : null,
+      h('div', { class: 'row' },
+        h('span', { class: 'row-label g-status' + (S.garmin.err ? ' err' : '') }, syncing ? 'Syncing…' : S.garmin.err ? S.garmin.err : S.garmin.last ? 'Synced ' + ago(S.garmin.last) : 'Not synced'),
+        h('button', { class: 'ghost small', disabled: !gReady() || syncing, onclick: () => garminSync(true) }, 'Sync now'))));
+
     main.append(h('section', { class: 'panel' }, h('h2', null, 'Gym'),
       toggle('Sound when rest ends', 'sound'),
       toggle('Keep screen on while training', 'awake')));
@@ -779,7 +917,7 @@
       try {
         const data = JSON.parse(await f.text());
         if (!data || typeof data.logs !== 'object') throw new Error('bad');
-        S = { ...DEFAULT, ...data, settings: { ...DEFAULT.settings, ...data.settings }, ui: { ...DEFAULT.ui, ...data.ui, view: 'settings' }, drafts: data.drafts || {}, notes: data.notes || {} };
+        S = { ...DEFAULT, ...data, settings: { ...DEFAULT.settings, ...data.settings }, ui: { ...DEFAULT.ui, ...data.ui, view: 'settings' }, drafts: data.drafts || {}, notes: data.notes || {}, garmin: { ...DEFAULT.garmin, ...(data.garmin || {}), url: S.garmin.url, key: S.garmin.key } };
         save(); flash('Backup restored'); render();
       } catch (e) { flash('That file is not a Phase backup'); }
       file.value = '';
@@ -800,7 +938,7 @@
 
   async function exportData() {
     const name = 'phase-backup-' + iso(new Date()) + '.json';
-    const blob = new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ ...S, garmin: { ...S.garmin, key: '' } }, null, 1)], { type: 'application/json' });
     try {
       const f = new File([blob], name, { type: 'application/json' });
       if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f] }); return; }
@@ -810,6 +948,7 @@
   }
 
   function flash(msg) {
+    document.querySelectorAll('.toast').forEach((t) => t.remove());
     const el = h('div', { class: 'toast', role: 'status' }, msg);
     document.body.append(el);
     setTimeout(() => el.remove(), 2200);
@@ -820,9 +959,11 @@
   // reopen on today's session each launch
   { const t = todayPos(); S.ui.w = t.w; S.ui.d = t.d; S.ui.view = 'train'; }
   render();
+  maybeSync();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') maybeSync(); });
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
-  window.__phase = { get state() { return S; }, render };
+  window.__phase = { get state() { return S; }, render, sync: () => garminSync(true) };
 })();
